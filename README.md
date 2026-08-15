@@ -11,11 +11,18 @@ Download the archive for your platform from [GitHub Releases](https://github.com
 | Platform | Archive |
 | --- | --- |
 | Linux x86-64 | `aingle-<version>-x86_64-unknown-linux-gnu.tar.gz` |
-| Windows x86-64 | `aingle-<version>-x86_64-pc-windows-msvc.zip` |
+| Linux ARM64 | `aingle-<version>-aarch64-unknown-linux-gnu.tar.gz` |
+| Linux x86 32-bit | `aingle-<version>-i686-unknown-linux-gnu.tar.gz` |
+| Windows x86-64 (MSVC) | `aingle-<version>-x86_64-pc-windows-msvc.zip` |
+| Windows x86-64 (GNU) | `aingle-<version>-x86_64-pc-windows-gnu.zip` |
+| Windows ARM64 | `aingle-<version>-aarch64-pc-windows-msvc.zip` |
+| Windows x86 32-bit | `aingle-<version>-i686-pc-windows-msvc.zip` |
 | macOS Apple Silicon | `aingle-<version>-aarch64-apple-darwin.tar.gz` |
 | macOS Intel | `aingle-<version>-x86_64-apple-darwin.tar.gz` |
 
 Verify the adjacent SHA-256 checksum before installing. The current binaries are unsigned, so macOS Gatekeeper or Windows SmartScreen may ask for explicit approval.
+
+Release builds cover every current Rust Tier 1 target. Intel macOS is also provided as a widely used Tier 2 host target.
 
 Build from source with Rust 1.93 or newer:
 

@@ -21,9 +21,30 @@ jobs:
             runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             extension: ''
-          - name: Windows x86-64
+          - name: Linux ARM64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            extension: ''
+          - name: Linux x86 32-bit
+            runner: ubuntu-24.04
+            target: i686-unknown-linux-gnu
+            extension: ''
+            linux_packages: gcc-multilib
+          - name: Windows x86-64 MSVC
             runner: windows-2025
             target: x86_64-pc-windows-msvc
+            extension: .exe
+          - name: Windows x86-64 GNU
+            runner: windows-2025
+            target: x86_64-pc-windows-gnu
+            extension: .exe
+          - name: Windows ARM64
+            runner: windows-11-vs2026-arm
+            target: aarch64-pc-windows-msvc
+            extension: .exe
+          - name: Windows x86 32-bit
+            runner: windows-2025
+            target: i686-pc-windows-msvc
             extension: .exe
           - name: macOS Apple Silicon
             runner: macos-15
@@ -40,6 +61,12 @@ jobs:
         with:
           toolchain: '1.93'
           targets: ${{ matrix.target }}
+      - name: Install Linux build dependencies
+        if: matrix.linux_packages
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ${{ matrix.linux_packages }}
       - uses: actions/cache@v6
         with:
           path: |
