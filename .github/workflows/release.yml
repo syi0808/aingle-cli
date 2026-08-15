@@ -109,7 +109,11 @@ jobs:
           ) | Set-Content -Encoding utf8 "stage/$package/README.txt"
           Compress-Archive -Path "stage/$package" -DestinationPath "dist/$package.zip"
           $hash = (Get-FileHash "dist/$package.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $package.zip" | Set-Content -Encoding ascii "dist/$package.zip.sha256"
+          [IO.File]::WriteAllText(
+            "dist/$package.zip.sha256",
+            "$hash  $package.zip`n",
+            [Text.Encoding]::ASCII
+          )
       - uses: actions/upload-artifact@v7
         with:
           name: aingle-cli-${{ steps.version.outputs.value }}-${{ matrix.target }}
