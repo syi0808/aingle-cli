@@ -197,8 +197,18 @@ impl AingleClient {
                     Some(Ok(_)) => continue,
                     Some(Err(error)) => Err(ClientError::Network(error)),
                 };
-                if event_tx.try_send(result).is_err() {
-                    break;
+                match result {
+                    Ok(Some(event)) => {
+                        if event_tx.try_send(Ok(event)).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(None) => continue,
+                    Err(error) => {
+                        if event_tx.try_send(Err(error)).is_err() {
+                            break;
+                        }
+                    }
                 }
             }
         });
@@ -348,7 +358,7 @@ fn map_event(
     bytes: &[u8],
     active: &mut Option<(Uuid, String)>,
     history: Option<&mpsc::Sender<HistoryCommand>>,
-) -> Result<ChatEvent, ClientError> {
+) -> Result<Option<ChatEvent>, ClientError> {
     let event = match decode_server(bytes)? {
         ServerFrame::Ready { agent_id } => ChatEvent::Ready {
             agent_id: agent_id.into_owned(),
@@ -410,13 +420,9 @@ fn map_event(
             code,
             message: message.into_owned(),
         },
-        ServerFrame::Pong(_) => {
-            return Err(ClientError::Protocol(
-                aingle_protocol::ProtocolError::InvalidField("unexpected pong"),
-            ));
-        }
+        ServerFrame::Pong(_) => return Ok(None),
     };
-    Ok(event)
+    Ok(Some(event))
 }
 
 fn history_send(
@@ -452,4 +458,17 @@ fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_event;
+
+    #[test]
+    fn heartbeat_pong_is_consumed_without_an_event() {
+        let mut active = None;
+        let pong = [0x18, 0, 0, 0, 0, 0, 0, 0, 42];
+
+        assert!(map_event(&pong, &mut active, None).unwrap().is_none());
+    }
 }

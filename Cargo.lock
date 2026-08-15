@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "aingle-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aingle-client",
  "aingle-protocol",
@@ -43,7 +43,7 @@ dependencies = [
 
 [[package]]
 name = "aingle-client"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aingle-protocol",
  "base64",
@@ -71,7 +71,7 @@ dependencies = [
 
 [[package]]
 name = "aingle-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "thiserror",
  "uuid",
