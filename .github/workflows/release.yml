@@ -1,0 +1,147 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86-64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            extension: ''
+          - name: Windows x86-64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            extension: .exe
+          - name: macOS Apple Silicon
+            runner: macos-15
+            target: aarch64-apple-darwin
+            extension: ''
+          - name: macOS Intel
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            extension: ''
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.93'
+          targets: ${{ matrix.target }}
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/${{ matrix.target }}
+          key: release-${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: release-${{ runner.os }}-${{ matrix.target }}-
+      - name: Select package version
+        id: version
+        shell: bash
+        run: |
+          package_id=$(cargo pkgid -p aingle-cli)
+          version=${package_id##*#}
+          version=${version##*@}
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]
+          if [[ "$GITHUB_REF_TYPE" == tag && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "tag $GITHUB_REF_NAME does not match CLI package version $version" >&2
+            exit 2
+          fi
+          echo "value=$version" >>"$GITHUB_OUTPUT"
+      - name: Build CLI
+        shell: bash
+        run: cargo build --release --locked -p aingle-cli --target '${{ matrix.target }}'
+      - name: Verify CLI
+        shell: bash
+        run: 'target/${{ matrix.target }}/release/aingle${{ matrix.extension }} --version'
+      - name: Package Unix CLI
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          package="aingle-$VERSION-$TARGET"
+          mkdir -p "stage/$package" dist
+          install -m 0755 "target/$TARGET/release/aingle" "stage/$package/aingle"
+          printf '%s\n' \
+            'Aingle CLI' \
+            '' \
+            'Install the aingle executable somewhere on your PATH.' \
+            'Run `aingle init`, then `aingle doctor --json`.' \
+            'Agent guidance: https://aingl.net/for-agent' \
+            >"stage/$package/README.txt"
+          tar -C stage -czf "dist/$package.tar.gz" "$package"
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            (cd dist && shasum -a 256 "$package.tar.gz" >"$package.tar.gz.sha256")
+          else
+            (cd dist && sha256sum "$package.tar.gz" >"$package.tar.gz.sha256")
+          fi
+      - name: Package Windows CLI
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $package = "aingle-$env:VERSION-$env:TARGET"
+          New-Item -ItemType Directory -Force "stage/$package", dist | Out-Null
+          Copy-Item "target/$env:TARGET/release/aingle.exe" "stage/$package/aingle.exe"
+          @(
+            "Aingle CLI",
+            "",
+            "Install aingle.exe somewhere on your PATH.",
+            "Run 'aingle init', then 'aingle doctor --json'.",
+            "Agent guidance: https://aingl.net/for-agent"
+          ) | Set-Content -Encoding utf8 "stage/$package/README.txt"
+          Compress-Archive -Path "stage/$package" -DestinationPath "dist/$package.zip"
+          $hash = (Get-FileHash "dist/$package.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $package.zip" | Set-Content -Encoding ascii "dist/$package.zip.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: aingle-cli-${{ steps.version.outputs.value }}-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  publish:
+    name: Publish GitHub Release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: aingle-cli-*
+          path: release-assets
+          merge-multiple: true
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=${TAG#v}
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            gh release create "$TAG" release-assets/* \
+              --verify-tag \
+              --title "Aingle CLI $version" \
+              --notes "Unsigned Aingle CLI binaries for Linux, Windows, and macOS. Verify the adjacent SHA-256 checksum before installation."
+          fi

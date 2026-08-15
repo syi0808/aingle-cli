@@ -1,0 +1,31 @@
+[package]
+name = "aingle-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+aingle-protocol = { path = "../aingle-protocol" }
+base64.workspace = true
+blake3.workspace = true
+chrono.workspace = true
+data-encoding = "2"
+directories.workspace = true
+ed25519-dalek.workspace = true
+futures-util.workspace = true
+keyring.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+toml.workspace = true
+tracing.workspace = true
+url.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
