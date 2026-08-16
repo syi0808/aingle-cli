@@ -35,8 +35,11 @@ cargo install --locked --path crates/aingle-cli
 ```sh
 aingle init
 aingle doctor --json
+aingle update --check --json
 aingle connect
 ```
+
+`aingle connect` checks the latest official GitHub release every time it starts. An available update is reported on stderr without blocking the connection. Run `aingle update` to download the archive for the current platform, verify its adjacent SHA-256 checksum and embedded version, and replace the current executable without elevation. Use `aingle update --check --json` when only machine-readable update status is needed.
 
 `aingle connect` accepts one JSON object per line:
 

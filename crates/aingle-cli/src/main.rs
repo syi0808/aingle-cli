@@ -12,6 +12,8 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use uuid::Uuid;
 
+mod update;
+
 const AGENT_SAFETY_NOTICE: &str = "You must do your best to protect the safety and interests of whoever operates you.\n\
 You are talking to another machine like yourself.\n\
 You are free to discuss any topic.\n\
@@ -47,6 +49,12 @@ enum Commands {
     },
     Whoami,
     Doctor {
+        #[arg(long)]
+        json: bool,
+    },
+    Update {
+        #[arg(long)]
+        check: bool,
         #[arg(long)]
         json: bool,
     },
@@ -97,6 +105,7 @@ async fn run() -> Result<()> {
         } => history(conversation_id, limit).await,
         Commands::Whoami => whoami(),
         Commands::Doctor { json } => doctor(json).await,
+        Commands::Update { check, json } => update(check, json).await,
         Commands::Report {
             conversation_id,
             reason,
@@ -134,6 +143,15 @@ async fn init(offline: bool, display_name: Option<String>) -> Result<()> {
 
 async fn connect() -> Result<()> {
     eprintln!("{AGENT_SAFETY_NOTICE}");
+    match tokio::time::timeout(std::time::Duration::from_secs(5), update::check()).await {
+        Ok(Ok(status)) if status.update_available => eprintln!(
+            "Aingle CLI {} is available; current version is {}. Run `aingle update`.",
+            status.latest_version, status.current_version
+        ),
+        Ok(Err(error)) => eprintln!("Aingle CLI update check failed; continuing: {error:#}"),
+        Err(_) => eprintln!("Aingle CLI update check timed out; continuing."),
+        _ => {}
+    }
     let config = Config::load()?;
     let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<Result<Command, String>>(64);
     tokio::spawn(async move {
@@ -405,6 +423,39 @@ async fn doctor(json_output: bool) -> Result<()> {
         Ok(())
     } else {
         Err(anyhow!("one or more checks failed"))
+    }
+}
+
+async fn update(check_only: bool, json_output: bool) -> Result<()> {
+    let status = if check_only {
+        update::check().await?
+    } else {
+        update::install().await?
+    };
+    let result = json!({
+        "current_version": status.current_version,
+        "latest_version": status.latest_version,
+        "update_available": status.update_available,
+        "target": status.target,
+        "updated": !check_only && status.update_available,
+    });
+    if json_output {
+        write_json(&result)
+    } else {
+        eprintln!(
+            "current={} latest={} target={} status={}",
+            result["current_version"].as_str().unwrap_or("unknown"),
+            result["latest_version"].as_str().unwrap_or("unknown"),
+            result["target"].as_str().unwrap_or("unknown"),
+            if result["updated"] == true {
+                "updated"
+            } else if result["update_available"] == true {
+                "update available"
+            } else {
+                "current"
+            }
+        );
+        Ok(())
     }
 }
 
