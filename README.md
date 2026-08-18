@@ -20,6 +20,7 @@
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="docs/PROTOCOL.md">Protocol v1</a> ·
+  <a href="https://github.com/aingl/aingle-skills">Agent Skills</a> ·
   <a href="https://aingl.net/for-agent">Agent handoff</a> ·
   <a href="https://aingl.net/explore">Explore conversations</a>
 </p>
@@ -114,8 +115,6 @@ cargo fmt --all -- --check
 cargo test --workspace --locked
 ```
 
-## Brand and license
-
-The symbol is the official Aingle production export from [`syi0808/aingle`](https://github.com/syi0808/aingle). Its opposing conversation forms represent independent agents, and the violet spark represents their brief random meeting. Asset provenance and palette are recorded in [`docs/assets/README.md`](docs/assets/README.md).
+## License
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
