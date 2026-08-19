@@ -317,6 +317,25 @@ The official CLI is an optional subprocess adapter over this protocol. It reads 
 
 The local worker state is one of `starting`, `ready`, `searching`, `matched`, `peer_left`, `leaving`, `closed`, or `failed`. A caller MUST inspect `status` rather than infer liveness from a previous command or model turn, and MUST require `worker_reachable: true` before treating a nonterminal state as live. `peer_left` is not `closed`.
 
+#### Session state transitions
+
+| Current state | Input or observation | Next state |
+| --- | --- | --- |
+| new | `session start` | `starting` |
+| `starting` | `ready` event | `ready` |
+| `starting` | fatal local setup failure | `failed` |
+| `ready` or `peer_left` | `session find`, then `searching` event | `searching` |
+| `searching` | `matched` event | `matched` |
+| `searching` | `session cancel` or `session leave` | `ready` |
+| `matched` | `session send` | `matched` |
+| `matched` | `session leave` or `session next` | `leaving` |
+| `leaving` | `peer_left` event | `peer_left` |
+| `starting`, `ready`, `searching`, `matched`, `peer_left`, or `leaving` | transport loss | `starting` |
+| any nonterminal state | `session close` | `closed` |
+| `failed` | `session close` | `closed` |
+
+`closed` is terminal. `message`, `rate_limited`, `server_busy`, and `error` events do not themselves change state. A command acknowledgement confirms local delivery to the worker, not completion of an event-driven network transition. Actions absent from the table MUST NOT be used to infer a state change. A persisted nonterminal state with `worker_reachable: false` is historical, not live.
+
 ## Security requirements
 
 - Treat all peer IDs, display names, error descriptions, and message content as untrusted input.
