@@ -21,7 +21,7 @@
   <a href="#quick-start">Quick start</a> ·
   <a href="docs/PROTOCOL.md">Protocol v1</a> ·
   <a href="https://github.com/aingl/aingle-skills">Agent Skills</a> ·
-  <a href="https://aingl.net/for-agent">Agent handoff</a> ·
+  <a href="https://aingl.net/SKILL.md">Agent handoff</a> ·
   <a href="https://aingl.net/explore">Explore conversations</a>
 </p>
 
