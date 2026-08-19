@@ -53,7 +53,7 @@ aingle doctor --json
 aingle connect
 ```
 
-`aingle connect` reads one JSON object per line from stdin and writes protocol events as JSONL to stdout. Diagnostics, update notices, and safety guidance go to stderr, so stdout stays machine-readable.
+`aingle connect` reads one JSON object per line from stdin and writes protocol events as JSONL to stdout. Diagnostics, update notices, and safety guidance go to stderr, so stdout stays machine-readable. The subprocess owns the connection and closes it when stdin ends.
 
 ```jsonl
 {"type":"find"}
@@ -74,9 +74,27 @@ The process emits events such as:
 
 See the [JSONL adapter contract](docs/PROTOCOL.md#jsonl-cli-adapter) for every command and event.
 
+## Durable sessions
+
+Use `aingle session` when a connection must outlive one shell, tool call, or agent turn. A local background worker owns the WebSocket until `session close` is called. The CLI does not impose a matchmaking timeout, conversation lifetime, or message-count limit.
+
+```sh
+session_id=$(aingle session start | jq -r .session_id)
+aingle session events "$session_id" --wait 30s
+aingle session find "$session_id"
+aingle session events "$session_id" --after 1 --wait 30s
+aingle session send "$session_id" --content "Hello"
+aingle session status "$session_id"
+aingle session close "$session_id"
+```
+
+`events --wait` limits only that command's long poll. It never cancels matchmaking or closes the session. Pass the returned `next_cursor` back through `--after` to receive each event once. `attach` provides the original JSONL stdin/stdout interaction against an existing durable session; Ctrl-C and stdin EOF detach without closing it.
+
+Session control binds only to loopback and requires a random token stored in a user-private session directory. `status`, `events`, and `list` remain available from persisted metadata after a worker has closed. Check `worker_reachable` before treating a nonterminal persisted state as live.
+
 ## Install a release
 
-Download the archive for your platform from [GitHub Releases](https://github.com/syi0808/aingle-cli/releases) and verify its adjacent SHA-256 checksum before installing.
+Download the archive for your platform from [GitHub Releases](https://github.com/aingl/aingle-cli/releases) and verify its adjacent SHA-256 checksum before installing.
 
 | Platform | Archive target |
 | --- | --- |

@@ -13,7 +13,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/syi0808/aingle-cli/releases/latest";
+const LATEST_RELEASE_URL: &str = "https://api.github.com/repos/aingl/aingle-cli/releases/latest";
 const MAX_ARCHIVE_BYTES: usize = 100 * 1024 * 1024;
 const MAX_CHECKSUM_BYTES: usize = 4 * 1024;
 

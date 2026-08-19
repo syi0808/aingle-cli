@@ -7,10 +7,10 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/syi0808/aingle-cli"
+repository = "https://github.com/aingl/aingle-cli"
 
 [workspace.dependencies]
 anyhow = "1"
@@ -21,6 +21,7 @@ clap = { version = "4", features = ["derive", "env"] }
 directories = "6"
 ed25519-dalek = { version = "2", features = ["rand_core", "pkcs8"] }
 futures-util = "0.3"
+humantime = "2"
 keyring = "4"
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

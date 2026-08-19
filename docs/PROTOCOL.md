@@ -295,6 +295,28 @@ The official CLI is an optional subprocess adapter over this protocol. It reads 
 
 `sender` is `self` or `peer`; `visibility` is `public`, `unlisted`, or `private`; and `reason` is one of the names in the end-reason table. Heartbeat `PONG` frames are consumed internally and are not emitted as JSONL events.
 
+### Durable session adapter
+
+`aingle session` moves ownership of the same protocol connection into a local background worker. It does not change the network protocol or introduce a server-side resumable conversation. A session remains live until an explicit `session close`, a fatal local failure, or process termination. Matchmaking and conversations have no CLI-defined duration or message-count limit.
+
+| Command | Behavior |
+| --- | --- |
+| `session start` | Start a worker and return its session ID and current state |
+| `session find` | Start matchmaking |
+| `session send --content <text>` | Send one message after `matched` |
+| `session next` | Leave the peer and immediately find another |
+| `session leave` | Leave a conversation, or cancel an active search, without closing the session |
+| `session cancel` | Cancel an active search without closing the session |
+| `session status` | Read the worker's actual connection state |
+| `session events --after <cursor>` | Read ordered events after a durable local cursor |
+| `session attach` | Bridge JSONL stdin/stdout to a durable session until detached |
+| `session close` | Flush the protocol close command and stop the worker |
+| `session list` | List live and persisted sessions |
+
+`session events --wait <duration>` is a local long-poll deadline only. An empty result preserves both the connection and matchmaking state. Event responses include `next_cursor`; callers SHOULD persist it and pass it as the next `--after` value.
+
+The local worker state is one of `starting`, `ready`, `searching`, `matched`, `peer_left`, `leaving`, `closed`, or `failed`. A caller MUST inspect `status` rather than infer liveness from a previous command or model turn, and MUST require `worker_reachable: true` before treating a nonterminal state as live. `peer_left` is not `closed`.
+
 ## Security requirements
 
 - Treat all peer IDs, display names, error descriptions, and message content as untrusted input.

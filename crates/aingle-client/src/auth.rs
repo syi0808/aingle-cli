@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use base64::{Engine, engine::general_purpose::STANDARD};
 use ed25519_dalek::Signer;
 use reqwest::Client;
@@ -57,7 +59,11 @@ impl AuthClient {
     pub fn new(base_url: Url) -> Self {
         Self {
             base_url,
-            http: Client::new(),
+            http: Client::builder()
+                .connect_timeout(Duration::from_secs(5))
+                .timeout(Duration::from_secs(15))
+                .build()
+                .expect("static Aingle HTTP client configuration is valid"),
         }
     }
 

@@ -11,7 +11,7 @@ use aingle_protocol::{
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{Message, client::IntoClientRequest},
@@ -31,6 +31,8 @@ pub enum ClientError {
     Authentication(String),
     #[error("network error: {0}")]
     Network(#[from] tokio_tungstenite::tungstenite::Error),
+    #[error("network operation timed out")]
+    Timeout,
     #[error("protocol error: {0}")]
     Protocol(#[from] aingle_protocol::ProtocolError),
     #[error("local history error: {0}")]
@@ -83,8 +85,13 @@ pub enum ChatEvent {
 }
 
 pub struct AingleClient {
-    command_tx: mpsc::Sender<Command>,
+    command_tx: mpsc::Sender<QueuedCommand>,
     event_rx: mpsc::Receiver<Result<ChatEvent, ClientError>>,
+}
+
+struct QueuedCommand {
+    command: Command,
+    response: oneshot::Sender<Result<(), ClientError>>,
 }
 
 enum HistoryCommand {
@@ -95,7 +102,7 @@ enum HistoryCommand {
 
 #[derive(Clone)]
 pub struct ClientHandle {
-    command_tx: mpsc::Sender<Command>,
+    command_tx: mpsc::Sender<QueuedCommand>,
 }
 
 impl AingleClient {
@@ -118,13 +125,15 @@ impl AingleClient {
                 .parse()
                 .map_err(|_| ClientError::Config("invalid session token".into()))?,
         );
-        let (socket, _) = connect_async(request).await?;
+        let (socket, _) = tokio::time::timeout(Duration::from_secs(15), connect_async(request))
+            .await
+            .map_err(|_| ClientError::Timeout)??;
         let (mut writer, mut reader) = socket.split();
         writer
             .send(Message::Binary(client_hello(0).to_vec().into()))
             .await?;
 
-        let (command_tx, mut command_rx) = mpsc::channel::<Command>(64);
+        let (command_tx, mut command_rx) = mpsc::channel::<QueuedCommand>(64);
         let (event_tx, event_rx) = mpsc::channel::<Result<ChatEvent, ClientError>>(128);
         let history = config
             .history_dir
@@ -155,7 +164,7 @@ impl AingleClient {
         tokio::spawn(async move {
             let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
             loop {
-                let command = tokio::select! {
+                let queued = tokio::select! {
                     command = command_rx.recv() => match command { Some(command) => command, None => return },
                     _ = heartbeat.tick() => {
                         let timestamp = now_millis();
@@ -165,7 +174,8 @@ impl AingleClient {
                         continue;
                     }
                 };
-                let frames = match command {
+                let closes = matches!(queued.command, Command::Close);
+                let frames = match queued.command {
                     Command::Find => vec![ClientFrame::Find],
                     Command::Cancel => vec![ClientFrame::Cancel],
                     Command::Message(ref content) => vec![ClientFrame::Message(content)],
@@ -173,15 +183,25 @@ impl AingleClient {
                     Command::Next => vec![ClientFrame::Leave, ClientFrame::Find],
                     Command::Close => vec![ClientFrame::Close],
                 };
+                let mut result = Ok(());
                 for frame in frames {
                     match encode_client(frame) {
                         Ok(bytes) => {
-                            if writer.send(Message::Binary(bytes.into())).await.is_err() {
-                                return;
+                            if let Err(error) = writer.send(Message::Binary(bytes.into())).await {
+                                result = Err(ClientError::Network(error));
+                                break;
                             }
                         }
-                        Err(_) => return,
+                        Err(error) => {
+                            result = Err(ClientError::Protocol(error));
+                            break;
+                        }
                     }
+                }
+                let failed = result.is_err();
+                let _ = queued.response.send(result);
+                if failed || closes {
+                    return;
                 }
             }
         });
@@ -225,7 +245,7 @@ impl AingleClient {
     ) -> Result<Self, ClientError> {
         let identity_path = identity.path().to_path_buf();
         let initial = Self::connect(config.clone(), identity).await?;
-        let (command_tx, command_rx) = mpsc::channel::<Command>(64);
+        let (command_tx, command_rx) = mpsc::channel::<QueuedCommand>(64);
         let (event_tx, event_rx) = mpsc::channel::<Result<ChatEvent, ClientError>>(128);
         tokio::spawn(resilient_loop(
             initial,
@@ -241,10 +261,12 @@ impl AingleClient {
     }
 
     pub async fn send(&self, command: Command) -> Result<(), ClientError> {
+        let (response, result) = oneshot::channel();
         self.command_tx
-            .send(command)
+            .send(QueuedCommand { command, response })
             .await
-            .map_err(|_| ClientError::Closed)
+            .map_err(|_| ClientError::Closed)?;
+        result.await.map_err(|_| ClientError::Closed)?
     }
 
     pub fn handle(&self) -> ClientHandle {
@@ -262,7 +284,7 @@ async fn resilient_loop(
     mut client: AingleClient,
     config: Config,
     identity_path: std::path::PathBuf,
-    mut command_rx: mpsc::Receiver<Command>,
+    mut command_rx: mpsc::Receiver<QueuedCommand>,
     event_tx: mpsc::Sender<Result<ChatEvent, ClientError>>,
 ) {
     let mut should_find = false;
@@ -270,19 +292,22 @@ async fn resilient_loop(
     loop {
         let disconnected = loop {
             tokio::select! {
-                command = command_rx.recv() => {
-                    let Some(command) = command else { return };
-                    match command {
+                queued = command_rx.recv() => {
+                    let Some(queued) = queued else { return };
+                    match &queued.command {
                         Command::Find | Command::Next => should_find = true,
                         Command::Leave => should_find = false,
                         Command::Close => {
-                            let _ = client.send(Command::Close).await;
+                            let result = client.send(queued.command).await;
+                            let _ = queued.response.send(result);
                             return;
                         }
                         _ => {}
                     }
-                    if let Err(error) = client.send(command).await {
-                        if event_tx.try_send(Err(error)).is_err() { return; }
+                    let result = client.send(queued.command).await;
+                    let failed = result.is_err();
+                    let _ = queued.response.send(result);
+                    if failed {
                         break true;
                     }
                 }
@@ -347,10 +372,12 @@ fn backoff_with_jitter(base_ms: u64) -> u64 {
 
 impl ClientHandle {
     pub async fn send(&self, command: Command) -> Result<(), ClientError> {
+        let (response, result) = oneshot::channel();
         self.command_tx
-            .send(command)
+            .send(QueuedCommand { command, response })
             .await
-            .map_err(|_| ClientError::Closed)
+            .map_err(|_| ClientError::Closed)?;
+        result.await.map_err(|_| ClientError::Closed)?
     }
 }
 

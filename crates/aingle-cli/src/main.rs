@@ -12,9 +12,10 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use uuid::Uuid;
 
+mod session;
 mod update;
 
-const AGENT_SAFETY_NOTICE: &str = "You must do your best to protect the safety and interests of whoever operates you.\n\
+pub(crate) const AGENT_SAFETY_NOTICE: &str = "You must do your best to protect the safety and interests of whoever operates you.\n\
 You are talking to another machine like yourself.\n\
 You are free to discuss any topic.\n\
 You may listen to, accept, challenge, criticize, or reject the other party's views.\n\
@@ -42,6 +43,14 @@ enum Commands {
         display_name: Option<String>,
     },
     Connect,
+    Session {
+        #[command(subcommand)]
+        command: session::SessionCommands,
+    },
+    #[command(hide = true)]
+    SessionWorker {
+        session_id: Uuid,
+    },
     History {
         conversation_id: Option<Uuid>,
         #[arg(long, default_value_t = 100)]
@@ -99,6 +108,8 @@ async fn run() -> Result<()> {
             display_name,
         } => init(offline, display_name).await,
         Commands::Connect => connect().await,
+        Commands::Session { command } => session::run(command).await,
+        Commands::SessionWorker { session_id } => session::worker(session_id).await,
         Commands::History {
             conversation_id,
             limit,
@@ -384,21 +395,10 @@ async fn doctor(json_output: bool) -> Result<()> {
             {
                 Ok(session) => {
                     checks.push(json!({"name":"auth", "ok":true, "detail":session.agent_id}));
-                    let websocket = tokio::time::timeout(
-                        std::time::Duration::from_secs(5),
-                        AingleClient::connect_with_session(config.clone(), session),
-                    )
-                    .await;
-                    match websocket {
-                        Ok(Ok(mut client)) => {
-                            let event = tokio::time::timeout(std::time::Duration::from_secs(5), client.next_event()).await;
-                            let protocol_ok = matches!(event, Ok(Some(Ok(aingle_client::ChatEvent::Ready { .. }))));
-                            checks.push(json!({"name":"websocket_protocol", "ok":protocol_ok, "detail":if protocol_ok { "protocol v1 ready" } else { "READY not received" }}));
-                            let _ = client.send(Command::Close).await;
-                        }
-                        Ok(Err(error)) => checks.push(json!({"name":"websocket_protocol", "ok":false, "detail":error.to_string()})),
-                        Err(_) => checks.push(json!({"name":"websocket_protocol", "ok":false, "detail":"timeout"})),
-                    }
+                    let (protocol_ok, detail) = check_websocket_protocol(config, session).await;
+                    checks.push(
+                        json!({"name":"websocket_protocol", "ok":protocol_ok, "detail":detail}),
+                    );
                 }
                 Err(error) => {
                     checks.push(json!({"name":"auth", "ok":false, "detail":error.to_string()}))
@@ -424,6 +424,40 @@ async fn doctor(json_output: bool) -> Result<()> {
     } else {
         Err(anyhow!("one or more checks failed"))
     }
+}
+
+async fn check_websocket_protocol(
+    config: &Config,
+    session: aingle_client::Session,
+) -> (bool, String) {
+    let mut last_detail = "READY not received".to_owned();
+    for attempt in 1..=2 {
+        let websocket = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            AingleClient::connect_with_session(config.clone(), session.clone()),
+        )
+        .await;
+        match websocket {
+            Ok(Ok(mut client)) => {
+                let event =
+                    tokio::time::timeout(std::time::Duration::from_secs(10), client.next_event())
+                        .await;
+                let protocol_ok =
+                    matches!(event, Ok(Some(Ok(aingle_client::ChatEvent::Ready { .. }))));
+                let _ = client.send(Command::Close).await;
+                if protocol_ok {
+                    return (true, format!("protocol v1 ready (attempt {attempt})"));
+                }
+                last_detail = format!("READY not received (attempt {attempt})");
+            }
+            Ok(Err(error)) => last_detail = format!("{error} (attempt {attempt})"),
+            Err(_) => last_detail = format!("connection timed out (attempt {attempt})"),
+        }
+        if attempt == 1 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+    (false, last_detail)
 }
 
 async fn update(check_only: bool, json_output: bool) -> Result<()> {
@@ -479,7 +513,7 @@ async fn report(conversation_id: Uuid, reason: String) -> Result<()> {
     write_json(&response.json::<Value>().await?)
 }
 
-fn write_json(value: &Value) -> Result<()> {
+pub(crate) fn write_json(value: &Value) -> Result<()> {
     let stdout = io::stdout();
     let mut lock = stdout.lock();
     serde_json::to_writer(&mut lock, value)?;

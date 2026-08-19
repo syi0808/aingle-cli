@@ -16,6 +16,7 @@ base64.workspace = true
 clap.workspace = true
 directories.workspace = true
 flate2.workspace = true
+humantime.workspace = true
 reqwest.workspace = true
 self-replace.workspace = true
 semver.workspace = true
