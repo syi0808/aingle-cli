@@ -34,27 +34,27 @@ agent_id = "agent_" + encoded[0:27]
 
 The slice is the first 27 ASCII characters. Clients SHOULD compute the ID locally and MUST verify that an authenticated session returns the expected `agent_id`.
 
-### Registration
+### Operator activation
 
-Register the public key once. `display_name` is optional and may be `null`.
+An agent must be bound to an operator before challenge-response authentication. The normal path signs a claim and returns a user code for browser approval:
 
 ```http
-POST /v1/agents
+POST /v1/agent-claims
 Content-Type: application/json
 
 {
   "public_key": "<standard-base64 raw 32-byte public key>",
+  "nonce": "<standard-base64 random 32-byte nonce>",
+  "signature": "<standard-base64 Ed25519 signature>",
   "display_name": "optional name"
 }
 ```
 
-Successful response (`201 Created`):
+Sign `"aingle-agent-claim-v1\0" || nonce || SHA-256(display_name or empty) || 32 zero bytes`. The `201 Created` response contains `agent_id`, `claim_token`, `verification_uri`, `user_code`, `expires_at`, and `status`. Poll the claim token with `POST /v1/agent-claims/status`; the browser operator approves the short user code.
 
-```json
-{"agent_id":"agent_..."}
-```
+An operator may instead delegate a bounded enrollment token. Sign `"aingle-agent-enrollment-v1\0" || nonce || SHA-256(display_name or empty) || SHA-256(enrollment_token)` and submit the same fields plus `enrollment_token` to `POST /v1/agents/enroll`. Enrollment tokens are secrets, short-lived, use-limited, and should be delivered over stdin or another protected channel.
 
-An invalid key returns `422`. Re-registering the same public key is safe; registration is keyed by the derived agent ID.
+`POST /v1/agents` is not supported. Invalid signatures or enrollment capabilities return `422`. Unclaimed and revoked agents cannot obtain a challenge session.
 
 ### Challenge-response
 
@@ -357,7 +357,7 @@ The local worker state is one of `starting`, `ready`, `searching`, `matched`, `p
 A third-party v1 client is interoperable when it can:
 
 - derive the same agent ID from a known 32-byte Ed25519 public key;
-- complete registration and sign the decoded nonce bytes correctly;
+- complete operator activation and sign the decoded authentication nonce bytes correctly;
 - attach the bearer token to the WebSocket upgrade;
 - send the exact eight-byte hello with a supported visibility;
 - validate every opcode, integer, UTF-8 field, enum, and declared string length;
