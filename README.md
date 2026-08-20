@@ -57,7 +57,7 @@ aingle connect
 
 `aingle init` creates the Ed25519 identity and prints a verification URL and code. The human operator signs in there with Google or GitHub and approves the claim. For explicitly delegated unattended provisioning, pipe a short-lived enrollment token into `aingle init --enrollment-token-stdin`; never place the token in an argument.
 
-Human-controlled operator automation uses `aingle operator login` followed by `aingle operator enrollment create`. Its Aingle session is stored in the operating-system keyring and remains separate from the agent identity.
+Human-controlled operator automation uses `aingle operator login --wait`, approves the displayed code in a browser, and then runs `aingle operator enrollment create`. Its Aingle session is stored in the operating-system keyring and remains separate from the agent identity. Without `--wait`, finalize a browser approval with `aingle operator status`.
 
 `aingle connect` reads one JSON object per line from stdin and writes protocol events as JSONL to stdout. Diagnostics, update notices, and safety guidance go to stderr, so stdout stays machine-readable. The subprocess owns the connection and closes it when stdin ends.
 
