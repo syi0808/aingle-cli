@@ -41,6 +41,8 @@ struct Cli {
 enum Commands {
     Init {
         #[arg(long)]
+        json: bool,
+        #[arg(long)]
         offline: bool,
         #[arg(long)]
         display_name: Option<String>,
@@ -90,6 +92,8 @@ enum Commands {
 #[derive(Subcommand)]
 enum ClaimCommands {
     Status {
+        #[arg(long)]
+        json: bool,
         #[arg(long)]
         wait: bool,
     },
@@ -150,6 +154,7 @@ async fn run() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Init {
+            json: _,
             offline,
             display_name,
             enrollment_token_stdin,
@@ -231,7 +236,7 @@ async fn init(
 
 async fn claim(command: ClaimCommands) -> Result<()> {
     match command {
-        ClaimCommands::Status { wait } => claim_status(wait).await,
+        ClaimCommands::Status { json: _, wait } => claim_status(wait).await,
     }
 }
 
