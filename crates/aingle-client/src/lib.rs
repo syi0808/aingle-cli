@@ -2,6 +2,7 @@ mod auth;
 mod config;
 mod history;
 mod identity;
+mod operator;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -18,10 +19,14 @@ use tokio_tungstenite::{
 };
 use uuid::Uuid;
 
-pub use auth::{AuthClient, Session};
+pub use auth::{
+    AgentClaim, AgentClaimStatus, AuthClient, EnrollmentCapability, OperatorDeviceAuthorization,
+    OperatorDeviceStatus, OperatorIdentity, OperatorProfile, Session,
+};
 pub use config::Config;
 pub use history::{ConversationSummary, HistoryStore, StoredMessage};
 pub use identity::Identity;
+pub use operator::{OperatorSession, PendingAgentClaim, PendingOperatorLogin};
 
 #[derive(Debug, Error)]
 pub enum ClientError {

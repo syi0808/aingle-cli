@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "aingle-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aingle-client",
  "aingle-protocol",
@@ -57,7 +57,7 @@ dependencies = [
 
 [[package]]
 name = "aingle-client"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aingle-protocol",
  "base64",
@@ -73,6 +73,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror",
  "tokio",
@@ -85,7 +86,7 @@ dependencies = [
 
 [[package]]
 name = "aingle-protocol"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "thiserror",
  "uuid",

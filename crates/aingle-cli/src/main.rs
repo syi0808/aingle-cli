@@ -1,10 +1,13 @@
 use std::{
-    io::{self, Write},
+    io::{self, Read, Write},
     process::ExitCode,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
-use aingle_client::{AingleClient, AuthClient, Command, Config, HistoryStore, Identity};
+use aingle_client::{
+    AingleClient, AuthClient, Command, Config, HistoryStore, Identity, OperatorSession,
+    PendingAgentClaim, PendingOperatorLogin,
+};
 use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 use serde::Deserialize;
@@ -41,6 +44,16 @@ enum Commands {
         offline: bool,
         #[arg(long)]
         display_name: Option<String>,
+        #[arg(long)]
+        enrollment_token_stdin: bool,
+    },
+    Claim {
+        #[command(subcommand)]
+        command: ClaimCommands,
+    },
+    Operator {
+        #[command(subcommand)]
+        command: OperatorCommands,
     },
     Connect,
     Session {
@@ -71,6 +84,39 @@ enum Commands {
         conversation_id: Uuid,
         #[arg(long, default_value = "unspecified")]
         reason: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ClaimCommands {
+    Status {
+        #[arg(long)]
+        wait: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum OperatorCommands {
+    Login {
+        #[arg(long)]
+        wait: bool,
+    },
+    Status,
+    Whoami,
+    Logout,
+    Enrollment {
+        #[command(subcommand)]
+        command: EnrollmentCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum EnrollmentCommands {
+    Create {
+        #[arg(long, default_value_t = 1)]
+        uses: u32,
+        #[arg(long, default_value = "1h")]
+        expires: humantime::Duration,
     },
 }
 
@@ -106,7 +152,10 @@ async fn run() -> Result<()> {
         Commands::Init {
             offline,
             display_name,
-        } => init(offline, display_name).await,
+            enrollment_token_stdin,
+        } => init(offline, display_name, enrollment_token_stdin).await,
+        Commands::Claim { command } => claim(command).await,
+        Commands::Operator { command } => operator(command).await,
         Commands::Connect => connect().await,
         Commands::Session { command } => session::run(command).await,
         Commands::SessionWorker { session_id } => session::worker(session_id).await,
@@ -124,7 +173,11 @@ async fn run() -> Result<()> {
     }
 }
 
-async fn init(offline: bool, display_name: Option<String>) -> Result<()> {
+async fn init(
+    offline: bool,
+    display_name: Option<String>,
+    enrollment_token_stdin: bool,
+) -> Result<()> {
     let path = Identity::default_path()?;
     let identity = if path.exists() {
         Identity::load(&path)?
@@ -138,18 +191,170 @@ async fn init(offline: bool, display_name: Option<String>) -> Result<()> {
         config.save()?;
         config
     };
-    if !offline {
+    if offline {
+        return write_json(
+            &json!({"agent_id": identity.agent_id(), "identity_path": path, "status":"local"}),
+        );
+    }
+
+    let auth = AuthClient::new(config.api_url);
+    if enrollment_token_stdin {
+        let token = read_secret_stdin()?;
+        let enrolled = auth.enroll(token, &identity, display_name).await?;
+        PendingAgentClaim::delete()?;
+        return write_json(
+            &json!({"status":"active", "agent_id":identity.agent_id(), "identity_path":path, "enrollment":enrolled}),
+        );
+    }
+
+    if auth.authenticate(&identity).await.is_ok() {
+        PendingAgentClaim::delete()?;
+        return write_json(
+            &json!({"status":"active", "agent_id":identity.agent_id(), "identity_path":path}),
+        );
+    }
+
+    let claim = auth.create_claim(&identity, display_name).await?;
+    PendingAgentClaim {
+        claim: claim.clone(),
+    }
+    .save()?;
+    write_json(&json!({
+        "status":claim.status,
+        "agent_id":claim.agent_id,
+        "identity_path":path,
+        "verification_uri":claim.verification_uri,
+        "user_code":claim.user_code,
+        "expires_at":claim.expires_at
+    }))
+}
+
+async fn claim(command: ClaimCommands) -> Result<()> {
+    match command {
+        ClaimCommands::Status { wait } => claim_status(wait).await,
+    }
+}
+
+async fn claim_status(wait: bool) -> Result<()> {
+    let config = Config::load()?;
+    let pending = PendingAgentClaim::load()?;
+    let auth = AuthClient::new(config.api_url);
+    loop {
+        let status = auth.claim_status(&pending.claim.claim_token).await?;
+        if status.status != "pending" || !wait {
+            if matches!(status.status.as_str(), "approved" | "denied" | "expired") {
+                PendingAgentClaim::delete()?;
+            }
+            return write_json(&serde_json::to_value(status)?);
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+async fn operator(command: OperatorCommands) -> Result<()> {
+    match command {
+        OperatorCommands::Login { wait } => operator_login(wait).await,
+        OperatorCommands::Status => operator_status(false).await,
+        OperatorCommands::Whoami => operator_whoami().await,
+        OperatorCommands::Logout => operator_logout().await,
+        OperatorCommands::Enrollment { command } => operator_enrollment(command).await,
+    }
+}
+
+async fn operator_login(wait: bool) -> Result<()> {
+    let config = Config::load()?;
+    let auth = AuthClient::new(config.api_url);
+    if let Ok(session) = OperatorSession::load()
+        && let Ok(profile) = auth.operator_profile(session.token()).await
+    {
+        return write_json(&json!({"status":"active", "operator":profile}));
+    }
+    let authorization = auth.create_operator_device_authorization().await?;
+    PendingOperatorLogin {
+        authorization: authorization.clone(),
+    }
+    .save()?;
+    write_json(&json!({
+        "status":authorization.status,
+        "verification_uri":authorization.verification_uri,
+        "user_code":authorization.user_code,
+        "expires_at":authorization.expires_at
+    }))?;
+    if wait {
+        operator_status(true).await?;
+    }
+    Ok(())
+}
+
+async fn operator_status(wait: bool) -> Result<()> {
+    let config = Config::load()?;
+    let auth = AuthClient::new(config.api_url);
+    if let Ok(pending) = PendingOperatorLogin::load() {
+        loop {
+            let status = auth
+                .operator_device_status(&pending.authorization.device_code)
+                .await?;
+            if status.status == "approved" {
+                let session = OperatorSession::new(pending.authorization.session_token.clone())?;
+                session.save()?;
+                PendingOperatorLogin::delete()?;
+                let profile = auth.operator_profile(session.token()).await?;
+                return write_json(&json!({"status":"active", "operator":profile}));
+            }
+            if status.status != "pending" || !wait {
+                if matches!(status.status.as_str(), "denied" | "expired") {
+                    PendingOperatorLogin::delete()?;
+                }
+                return write_json(&serde_json::to_value(status)?);
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    }
+    operator_whoami().await
+}
+
+async fn operator_whoami() -> Result<()> {
+    let config = Config::load()?;
+    let session = OperatorSession::load()?;
+    let profile = AuthClient::new(config.api_url)
+        .operator_profile(session.token())
+        .await?;
+    write_json(&serde_json::to_value(profile)?)
+}
+
+async fn operator_logout() -> Result<()> {
+    let config = Config::load()?;
+    if let Ok(session) = OperatorSession::load() {
         AuthClient::new(config.api_url)
-            .register(&identity, display_name)
+            .operator_logout(session.token())
             .await?;
     }
-    println!(
-        "{}",
-        serde_json::to_string(
-            &json!({"agent_id": identity.agent_id(), "identity_path": path, "registered": !offline})
-        )?
-    );
-    Ok(())
+    OperatorSession::delete()?;
+    PendingOperatorLogin::delete()?;
+    write_json(&json!({"status":"logged_out"}))
+}
+
+async fn operator_enrollment(command: EnrollmentCommands) -> Result<()> {
+    match command {
+        EnrollmentCommands::Create { uses, expires } => {
+            let config = Config::load()?;
+            let session = OperatorSession::load()?;
+            let capability = AuthClient::new(config.api_url)
+                .create_enrollment_capability(session.token(), uses, expires.as_secs())
+                .await?;
+            write_json(&serde_json::to_value(capability)?)
+        }
+    }
+}
+
+fn read_secret_stdin() -> Result<String> {
+    let mut value = String::new();
+    io::stdin().read_to_string(&mut value)?;
+    let value = value.trim().to_owned();
+    if !value.starts_with("aingle_enroll_") {
+        return Err(anyhow!("invalid enrollment token on stdin"));
+    }
+    Ok(value)
 }
 
 async fn connect() -> Result<()> {
@@ -395,13 +600,23 @@ async fn doctor(json_output: bool) -> Result<()> {
             {
                 Ok(session) => {
                     checks.push(json!({"name":"auth", "ok":true, "detail":session.agent_id}));
+                    checks.push(json!({"name":"operator_binding", "ok":true, "detail":"active"}));
                     let (protocol_ok, detail) = check_websocket_protocol(config, session).await;
                     checks.push(
                         json!({"name":"websocket_protocol", "ok":protocol_ok, "detail":detail}),
                     );
                 }
                 Err(error) => {
-                    checks.push(json!({"name":"auth", "ok":false, "detail":error.to_string()}))
+                    checks.push(json!({"name":"auth", "ok":false, "detail":error.to_string()}));
+                    let binding = match PendingAgentClaim::load() {
+                        Ok(pending) => AuthClient::new(config.api_url.clone())
+                            .claim_status(&pending.claim.claim_token)
+                            .await
+                            .map(|status| status.status)
+                            .unwrap_or_else(|claim_error| claim_error.to_string()),
+                        Err(_) => "operator approval required; run `aingle init`".to_owned(),
+                    };
+                    checks.push(json!({"name":"operator_binding", "ok":false, "detail":binding}));
                 }
             }
         }
