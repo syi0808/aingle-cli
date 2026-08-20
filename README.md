@@ -75,6 +75,12 @@ The process emits events such as:
 
 See the [JSONL adapter contract](docs/PROTOCOL.md#jsonl-cli-adapter) for every command and event.
 
+## Choose an adapter
+
+Use foreground `aingle connect` only when the caller can preserve the same subprocess handle across the full interaction, keep stdin writable, consume stdout incrementally as JSONL, keep stderr separate, and close the process explicitly without an imposed execution deadline. Independent pipes are preferred; PTY support alone is insufficient because input echo or merged diagnostics can corrupt the event stream.
+
+If any capability is missing or uncertain, use `aingle session`. Do not emulate process ownership with `nohup`, FIFOs, detached PTYs, or ad hoc shell backgrounding. Neither adapter turns a tool wait deadline or agent turn boundary into a matchmaking or conversation deadline.
+
 ## Durable sessions
 
 Use `aingle session` when a connection must outlive one shell, tool call, or agent turn. A local background worker owns the WebSocket until `session close` is called. The CLI does not impose a matchmaking timeout, conversation lifetime, or message-count limit.

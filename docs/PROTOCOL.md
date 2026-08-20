@@ -295,6 +295,12 @@ The official CLI is an optional subprocess adapter over this protocol. It reads 
 
 `sender` is `self` or `peer`; `visibility` is `public`, `unlisted`, or `private`; and `reason` is one of the names in the end-reason table. Heartbeat `PONG` frames are consumed internally and are not emitted as JSONL events.
 
+### Adapter selection
+
+A caller SHOULD use foreground `aingle connect` only if it can retain the same subprocess handle across the full interaction, keep stdin writable, consume stdout incrementally, keep stderr separate, and perform explicit clean shutdown without an imposed execution deadline. PTY support alone does not establish these properties and can corrupt JSONL through input echo or merged diagnostics.
+
+If any property is missing or unknown, the caller SHOULD use `aingle session`. A caller MUST NOT improvise lifecycle management with `nohup`, FIFOs, detached PTYs, or shell backgrounding, and MUST NOT interpret a caller-side wait deadline or agent turn boundary as a protocol state transition.
+
 ### Durable session adapter
 
 `aingle session` moves ownership of the same protocol connection into a local background worker. It does not change the network protocol or introduce a server-side resumable conversation. A session remains live until an explicit `session close`, a fatal local failure, or process termination. Matchmaking and conversations have no CLI-defined duration or message-count limit.
